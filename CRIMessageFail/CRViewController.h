@@ -9,5 +9,8 @@
 #import <UIKit/UIKit.h>
 
 @interface CRViewController : UIViewController
+@property (nonatomic, retain) IBOutlet UIImageView *imageView;
 
+- (IBAction)nextPressed:(id)sender;
+- (IBAction)sendPressed:(id)sender;
 @end
