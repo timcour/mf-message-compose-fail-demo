@@ -8,11 +8,19 @@
 
 #import "CRViewController.h"
 
-@interface CRViewController ()
+#import <MobileCoreServices/UTCoreTypes.h>
+#import <MessageUI/MessageUI.h>
+
+@interface CRViewController () <
+MFMessageComposeViewControllerDelegate,
+UINavigationControllerDelegate,
+UITextFieldDelegate
+>
 
 @end
 
 static NSArray *_imageURLs;
+static NSCache *_imageDataCache;
 
 @implementation CRViewController {
     int _currentIndex;
@@ -41,19 +49,49 @@ static NSArray *_imageURLs;
                   @"http://cam-image-corpus-west.s3.amazonaws.com/corp/original/c30e1c20031cfcbba5621b209561ef0cbe3ba95f",
                   @"http://cam-image-corpus-west.s3.amazonaws.com/corp/original/fccd467ea997503a151cb93c34d1dda0e6160940",
                   nil];
+    _imageDataCache = [NSCache new];
+    [_imageDataCache setCountLimit:_imageURLs.count];
 }
 
-- (void)viewDidLoad
-{
+- (NSData *)fetchImageAtURL:(NSURL *)url {
+    NSData *data = [_imageDataCache objectForKey:url.absoluteString];
+    if (!data) {
+        data = [NSData dataWithContentsOfURL:url];
+    }
+    [_imageDataCache setObject:data forKey:url.absoluteString];
+    return data;
+}
+
+- (void)loadAllImages {
+    for (int i=0; i<_imageURLs.count; i++) {
+        NSString *urlStr = _imageURLs[i];
+        [self.feedbackMsg performSelectorOnMainThread:@selector(setText:)
+                                           withObject:[NSString stringWithFormat:@"fetching image %i", i]
+                                        waitUntilDone:YES];
+        [self fetchImageAtURL:[NSURL URLWithString:urlStr]];
+    }
+    [self.feedbackMsg performSelectorOnMainThread:@selector(setText:)
+                                       withObject:[NSString stringWithFormat:@"%i images fetched", _imageURLs.count]
+                                    waitUntilDone:NO];
+}
+
+- (void)viewDidLoad {
     [super viewDidLoad];
+    // load all images blocks the main thread and may take a while with a slow net connection
+    [self performSelectorInBackground:@selector(loadAllImages) withObject:nil];
     [self loadImageAtIndex:0];
 }
 
 - (void)loadImageAtIndex:(int)index {
     NSURL *url = [NSURL URLWithString:_imageURLs[index]];
-    NSData *data = [NSData dataWithContentsOfURL:url];
+    NSData *data = [self fetchImageAtURL:url];
     self.imageView.image = [UIImage imageWithData:data];
     _currentIndex = index;
+    self.feedbackMsg.text = [NSString stringWithFormat:@"image %i", _currentIndex];
+}
+
+- (void)previousPressed:(id)sender {
+    [self loadImageAtIndex:(_currentIndex + _imageURLs.count - 1) % _imageURLs.count];
 }
 
 - (void)nextPressed:(id)sender {
@@ -61,13 +99,75 @@ static NSArray *_imageURLs;
 }
 
 - (void)sendPressed:(id)sender {
-    NSLog(@"sendPressed: not yet implemented");
+    if ([MFMessageComposeViewController canSendText]) {
+        [self displaySMSComposerSheet];
+    } else {
+        self.feedbackMsg.hidden = NO;
+		self.feedbackMsg.text = @"Device not configured to send SMS.";
+    }
 }
 
-- (void)didReceiveMemoryWarning
+#pragma mark - UITextFieldDelegate
+
+- (BOOL)textField:(UITextField *)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string {
+    if([string isEqualToString:@"\n"]) {
+        [textField resignFirstResponder];
+        return NO;
+    }
+    return YES;
+}
+
+#pragma mark - MessageComposer
+// -------------------------------------------------------------------------------
+//	displayMailComposerSheet
+//  Displays an SMS composition interface inside the application.
+// -------------------------------------------------------------------------------
+- (void)displaySMSComposerSheet
 {
-    [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
+	MFMessageComposeViewController *picker = [[MFMessageComposeViewController alloc] init];
+	picker.messageComposeDelegate = self;
+
+    NSData *data = [_imageDataCache objectForKey:[_imageURLs objectAtIndex:_currentIndex]];
+    [picker addAttachmentData:data
+               typeIdentifier:(NSString *)kUTTypeGIF
+                     filename:@"share.gif"];
+    if (![self.recipientTextField.text isEqualToString:@""]) {
+        picker.recipients = [NSArray arrayWithObject:self.recipientTextField.text];
+    }
+    picker.body = [NSString stringWithFormat:@"image: %i", _currentIndex];
+
+	[self presentViewController:picker animated:YES completion:NULL];
+}
+
+// -------------------------------------------------------------------------------
+//	messageComposeViewController:didFinishWithResult:
+//  Dismisses the message composition interface when users tap Cancel or Send.
+//  Proceeds to update the feedback message field with the result of the
+//  operation.
+// -------------------------------------------------------------------------------
+- (void)messageComposeViewController:(MFMessageComposeViewController *)controller
+                 didFinishWithResult:(MessageComposeResult)result
+{
+	self.feedbackMsg.hidden = NO;
+	// Notifies users about errors associated with the interface
+	switch (result)
+	{
+		case MessageComposeResultCancelled:
+			self.feedbackMsg.text = @"Result: SMS sending canceled";
+			break;
+		case MessageComposeResultSent:
+			self.feedbackMsg.text = @"Result: SMS sent";
+            [self nextPressed:nil];
+			break;
+		case MessageComposeResultFailed:
+			self.feedbackMsg.text = @"Result: SMS sending failed";
+			break;
+		default:
+			self.feedbackMsg.text = @"Result: SMS not sent";
+			break;
+	}
+
+	[self dismissViewControllerAnimated:YES completion:NULL];
 }
 
 @end

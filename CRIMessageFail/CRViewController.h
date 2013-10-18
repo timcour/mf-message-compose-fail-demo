@@ -10,7 +10,10 @@
 
 @interface CRViewController : UIViewController
 @property (nonatomic, retain) IBOutlet UIImageView *imageView;
+@property (nonatomic, retain) IBOutlet UILabel *feedbackMsg;
+@property (nonatomic, retain) IBOutlet UITextField *recipientTextField;
 
+- (IBAction)previousPressed:(id)sender;
 - (IBAction)nextPressed:(id)sender;
 - (IBAction)sendPressed:(id)sender;
 @end
